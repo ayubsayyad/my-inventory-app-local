@@ -1,11 +1,6 @@
 import React, { useState, useEffect } from 'react';
 
-// Global variables (no longer needed for Firebase, but kept for context if any other globals were here)
-// const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-// const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-// const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-
-// --- Helper function to save inventory to local storage ---
+// Helper function to save inventory to local storage
 const saveInventoryToLocalStorage = (inventoryData) => {
   try {
     localStorage.setItem('inventory', JSON.stringify(inventoryData));
@@ -42,7 +37,7 @@ const App = () => {
     setAlertMessage('');
   };
 
-  // --- Data Loading from Local Storage on Mount ---
+  // Data Loading from Local Storage on Mount
   useEffect(() => {
     try {
       const storedInventory = localStorage.getItem('inventory');
@@ -55,7 +50,7 @@ const App = () => {
     }
   }, []); // Empty dependency array means this runs once on component mount
 
-  // --- Inventory Management Functions (Local Storage Operations) ---
+  // Inventory Management Functions (Local Storage Operations)
 
   const handleAddItem = () => {
     if (!newItemName || !newItemQuantity || !newItemLocation) {
@@ -88,17 +83,19 @@ const App = () => {
   };
 
   const handleUpdateQuantity = (id, delta) => {
-    const updatedInventory = inventory.map(item =>
-      item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item
-    );
-    
-    // Check if quantity became negative before updating and saving
     const currentItem = inventory.find(item => item.id === id);
-    if (currentItem && (currentItem.quantity + delta) < 0) {
-        showAlert('Quantity cannot be negative.');
-        return; // Don't update or save if it would go negative
+    if (!currentItem) return;
+
+    const newQuantity = currentItem.quantity + delta;
+    if (newQuantity < 0) {
+      showAlert('Quantity cannot be negative.');
+      return;
     }
 
+    const updatedInventory = inventory.map(item =>
+      item.id === id ? { ...item, quantity: newQuantity } : item
+    );
+    
     setInventory(updatedInventory);
     saveInventoryToLocalStorage(updatedInventory); // Save to local storage
     showAlert('Quantity updated!');
@@ -142,7 +139,7 @@ const App = () => {
     showAlert('Item updated successfully!');
   };
 
-  // --- JSON Import/Export Functions (Local Storage Specific) ---
+  // JSON Import/Export Functions (Local Storage Specific)
 
   const handleImportJson = () => {
     try {
@@ -156,20 +153,39 @@ const App = () => {
       let finalInventory = [];
 
       if (!confirmClear) {
-        // If not clearing, merge existing with new (ensure unique IDs if needed)
-        // For simplicity here, we'll just add new items, assuming IDs are distinct
-        showAlert('Import without clearing is not fully implemented for ID merging. Please manually clear first.');
-        return; // Or implement more complex merging logic
-      }
+        // Simple merge: add new items. Existing items with same name will be duplicates.
+        // For a more robust merge, you'd need to compare and update based on unique identifiers.
+        finalInventory = [...inventory]; // Start with existing
+        parsedData.forEach(newItem => {
+            // Check if an item with the same name already exists and update it, or add as new
+            const existingIndex = finalInventory.findIndex(item => item.name === newItem.name);
+            if (existingIndex > -1) {
+                // Update existing item (e.g., quantity)
+                finalInventory[existingIndex] = {
+                    ...finalInventory[existingIndex],
+                    quantity: newItem.quantity,
+                    location: newItem.location || finalInventory[existingIndex].location // Update location if provided
+                };
+            } else {
+                // Add new item, ensuring it has an ID
+                finalInventory.push({
+                    id: newItem.id || Date.now().toString() + Math.random().toString(36).substring(2, 9),
+                    name: newItem.name,
+                    quantity: newItem.quantity,
+                    location: newItem.location
+                });
+            }
+        });
 
-      // If clearing, just use the parsed data
-      // Ensure imported items have an 'id' or generate one if missing
-      finalInventory = parsedData.map(item => ({
-        id: item.id || Date.now().toString() + Math.random().toString(36).substring(2, 9), // Generate if missing
-        name: item.name,
-        quantity: item.quantity,
-        location: item.location
-      }));
+      } else {
+        // If clearing, just use the parsed data
+        finalInventory = parsedData.map(item => ({
+          id: item.id || Date.now().toString() + Math.random().toString(36).substring(2, 9), // Generate if missing
+          name: item.name,
+          quantity: item.quantity,
+          location: item.location
+        }));
+      }
       
       setInventory(finalInventory);
       saveInventoryToLocalStorage(finalInventory); // Save the imported data
@@ -206,61 +222,69 @@ const App = () => {
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans flex flex-col">
-      {/* Tailwind CSS CDN for styling */}
-      <script src="https://cdn.tailwindcss.com"></script>
-      <style>
-        {`
-          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-          body {
-            font-family: 'Inter', sans-serif;
-          }
-        `}
-      </style>
+      {/* Tailwind CSS CDN and custom styles are assumed to be in public/index.html */}
 
       <header className="p-4 bg-white border-b border-gray-200 shadow-sm flex justify-center items-center relative">
         <h1 className="text-2xl font-bold text-gray-900">My Local Inventory</h1>
-        {/* User ID display removed as Firebase is no longer used */}
       </header>
 
       <div className="flex-1 p-4 overflow-y-auto pb-24">
         {inventory.length === 0 ? (
           <p className="text-center mt-12 text-lg text-gray-500">No items in inventory. Add some!</p>
         ) : (
-          inventory.map(item => (
-            <div key={item.id} className="flex flex-col sm:flex-row bg-white rounded-xl p-4 mb-3 shadow-sm items-center justify-between">
-              <div className="flex-1 text-center sm:text-left mb-4 sm:mb-0">
-                <p className="text-lg font-semibold text-gray-900 mb-1">{item.name}</p>
-                <p className="text-sm text-gray-700">Quantity: {item.quantity}</p>
-                <p className="text-sm text-gray-700">Location: {item.location}</p>
-              </div>
-              <div className="flex flex-wrap justify-center sm:justify-end gap-2">
-                <button
-                  className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out"
-                  onClick={() => handleUpdateQuantity(item.id, 1)}
-                >
-                  +
-                </button>
-                <button
-                  className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out"
-                  onClick={() => handleUpdateQuantity(item.id, -1)}
-                >
-                  -
-                </button>
-                <button
-                  className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out"
-                  onClick={() => openEditModal(item)}
-                >
-                  Edit
-                </button>
-                <button
-                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out"
-                  onClick={() => handleDeleteItem(item.id)}
-                >
-                  Delete
-                </button>
-              </div>
-            </div>
-          ))
+          // --- TABLE STRUCTURE STARTS HERE ---
+          <div className="overflow-x-auto rounded-xl shadow-md border border-gray-200"> {/* Added wrapper for responsive scrolling and outer border */}
+            <table className="min-w-full bg-white divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
+                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {inventory.map(item => (
+                  <tr key={item.id} className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-700">{item.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600">
+                      <span className="font-semibold">{item.quantity}</span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{item.location}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                      <div className="flex justify-center gap-2"> {/* Centered buttons */}
+                        <button
+                          className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
+                          onClick={() => handleUpdateQuantity(item.id, 1)}
+                        >
+                          +
+                        </button>
+                        <button
+                          className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
+                          onClick={() => handleUpdateQuantity(item.id, -1)}
+                        >
+                          -
+                        </button>
+                        <button
+                          className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
+                          onClick={() => openEditModal(item)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
+                          onClick={() => handleDeleteItem(item.id)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          // --- TABLE STRUCTURE ENDS HERE ---
         )}
       </div>
 
