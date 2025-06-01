@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 const saveInventoryToLocalStorage = (inventoryData) => {
   try {
     localStorage.setItem('inventory', JSON.stringify(inventoryData));
+    console.log("Local storage updated:", inventoryData); // Debug log
   } catch (error) {
     console.error("Error saving to local storage:", error);
     // You might want to display an alert to the user here
@@ -16,12 +17,12 @@ const App = () => {
   const [isAddModalVisible, setAddModalVisible] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQuantity, setNewItemQuantity] = useState('');
-  const [newItemLocation, setNewItemLocation] = useState('');
   const [isEditModalVisible, setEditModalVisible] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
+  const [editingItem, setEditingItem] = useState(null); // This holds the item being edited
   const [editQuantity, setEditQuantity] = useState('');
   const [alertMessage, setAlertMessage] = useState('');
   const [isAlertVisible, setIsAlertVisible] = useState(false);
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState(null); // Stores ID for pending deletion
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
   const [jsonImportText, setJsonImportText] = useState('');
 
@@ -33,16 +34,27 @@ const App = () => {
 
   // Function to hide custom alert message
   const hideAlert = () => {
+    setAlertMessage(''); // Clear message first
     setIsAlertVisible(false);
-    setAlertMessage('');
+    setConfirmingDeleteId(null); // Crucial: Clear confirming ID when alert is hidden
   };
 
   // Data Loading from Local Storage on Mount
   useEffect(() => {
+    console.log("App component mounted. Current inventory state (initial):", inventory); // Debug log
     try {
       const storedInventory = localStorage.getItem('inventory');
       if (storedInventory) {
-        setInventory(JSON.parse(storedInventory));
+        const parsedInventory = JSON.parse(storedInventory);
+        // Ensure old items get isFavorite property if it's missing
+        const inventoryWithFavorites = parsedInventory.map(item => ({
+          ...item,
+          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false // Default to false if not present
+        }));
+        setInventory(inventoryWithFavorites);
+        console.log("Inventory loaded from local storage:", inventoryWithFavorites); // Debug log
+      } else {
+        console.log("No inventory found in local storage."); // Debug log
       }
     } catch (error) {
       console.error("Error loading from local storage:", error);
@@ -53,7 +65,7 @@ const App = () => {
   // Inventory Management Functions (Local Storage Operations)
 
   const handleAddItem = () => {
-    if (!newItemName || !newItemQuantity || !newItemLocation) {
+    if (!newItemName || !newItemQuantity) {
       showAlert('Please fill all fields.');
       return;
     }
@@ -68,7 +80,7 @@ const App = () => {
       id: Date.now().toString(), // Simple unique ID for local storage
       name: newItemName,
       quantity: quantityNum,
-      location: newItemLocation,
+      isFavorite: false, // New items are not favorited by default
     };
 
     const updatedInventory = [...inventory, newItem];
@@ -78,49 +90,94 @@ const App = () => {
     setAddModalVisible(false);
     setNewItemName('');
     setNewItemQuantity('');
-    setNewItemLocation('');
     showAlert('Item added successfully!');
   };
 
   const handleUpdateQuantity = (id, delta) => {
-    const currentItem = inventory.find(item => item.id === id);
-    if (!currentItem) return;
-
-    const newQuantity = currentItem.quantity + delta;
-    if (newQuantity < 0) {
-      showAlert('Quantity cannot be negative.');
-      return;
-    }
-
     const updatedInventory = inventory.map(item =>
-      item.id === id ? { ...item, quantity: newQuantity } : item
+      item.id === id ? { ...item, quantity: Math.max(0, item.quantity + delta) } : item
     );
     
+    const currentItem = inventory.find(item => item.id === id);
+    if (currentItem && (currentItem.quantity + delta) < 0) {
+        showAlert('Quantity cannot be negative.');
+        return;
+    }
+
     setInventory(updatedInventory);
-    saveInventoryToLocalStorage(updatedInventory); // Save to local storage
-    showAlert('Quantity updated!');
+    saveInventoryToLocalStorage(updatedInventory);
   };
 
+  // Initiates the deletion confirmation via custom alert
   const handleDeleteItem = (id) => {
-    const confirmDelete = window.confirm('Are you sure you want to delete this item?');
-    if (!confirmDelete) {
+    console.log("handleDeleteItem called. ID received for confirmation:", id); // Debug log
+    if (!id) {
+      console.error("handleDeleteItem: ID is undefined or null, cannot initiate deletion."); // Debug log
+      showAlert("Cannot delete item: ID is missing.");
+      return;
+    }
+    setConfirmingDeleteId(id); // Store ID for confirmation
+    // Ensure editingItem is valid for displaying name in alert
+    const itemToDeleteName = editingItem && editingItem.id === id ? editingItem.name : 'this item';
+    showAlert(`Are you sure you want to delete "${itemToDeleteName}"? This action cannot be undone.`);
+  };
+
+  // Executes deletion after user confirms via custom alert
+  const handleConfirmDeletion = () => {
+    const idToDelete = confirmingDeleteId; // Get the ID from state
+    console.log("handleConfirmDeletion called. ID to delete:", idToDelete); // Debug log
+
+    if (!idToDelete) {
+      console.error("handleConfirmDeletion: No item ID found in confirmingDeleteId state.");
+      hideAlert(); // Just hide the alert if no ID is set
       return;
     }
 
-    const updatedInventory = inventory.filter(item => item.id !== id);
-    setInventory(updatedInventory);
-    saveInventoryToLocalStorage(updatedInventory); // Save to local storage
-    showAlert('Item deleted successfully!');
+    try {
+      const updatedInventory = inventory.filter(item => item.id !== idToDelete);
+      console.log("Inventory before set (after filter):", updatedInventory); // Debug log
+      setInventory(updatedInventory); // Update React state
+      saveInventoryToLocalStorage(updatedInventory); // Persist to local storage
+      
+      setEditModalVisible(false); // Close edit modal
+      setEditingItem(null); // Clear editing item state
+      hideAlert(); // Hide the confirmation alert
+      showAlert('Item deleted successfully!');
+      console.log("Item deletion process completed successfully for ID:", idToDelete); // Debug log
+    } catch (error) {
+      console.error("Error during deletion process:", error); // Debug log
+      showAlert('Failed to delete item.');
+    }
   };
 
+  // Function to toggle favorite status
+  const toggleFavorite = (id) => {
+    console.log("Toggling favorite for item ID:", id); // Debug log
+    const updatedInventory = inventory.map(item =>
+      item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
+    );
+    setInventory(updatedInventory);
+    saveInventoryToLocalStorage(updatedInventory);
+  };
+
+
   const openEditModal = (item) => {
-    setEditingItem(item);
+    console.log("openEditModal called for item:", item); // Debug log
+    if (!item || !item.id) {
+      console.error("openEditModal: Item or item ID is missing, cannot open modal."); // Debug log
+      showAlert("Cannot edit item: Item data is incomplete.");
+      return;
+    }
+    setEditingItem(item); // Set the item being edited
     setEditQuantity(String(item.quantity));
     setEditModalVisible(true);
   };
 
   const handleSaveEdit = () => {
-    if (!editingItem) return;
+    if (!editingItem) {
+      console.error("handleSaveEdit: No editing item found.");
+      return;
+    }
 
     const newQuantity = parseInt(editQuantity, 10);
     if (isNaN(newQuantity) || newQuantity < 0) {
@@ -132,7 +189,7 @@ const App = () => {
       item.id === editingItem.id ? { ...item, quantity: newQuantity } : item
     );
     setInventory(updatedInventory);
-    saveInventoryToLocalStorage(updatedInventory); // Save to local storage
+    saveInventoryToLocalStorage(updatedInventory);
 
     setEditModalVisible(false);
     setEditingItem(null);
@@ -153,42 +210,36 @@ const App = () => {
       let finalInventory = [];
 
       if (!confirmClear) {
-        // Simple merge: add new items. Existing items with same name will be duplicates.
-        // For a more robust merge, you'd need to compare and update based on unique identifiers.
-        finalInventory = [...inventory]; // Start with existing
+        finalInventory = [...inventory];
         parsedData.forEach(newItem => {
-            // Check if an item with the same name already exists and update it, or add as new
             const existingIndex = finalInventory.findIndex(item => item.name === newItem.name);
             if (existingIndex > -1) {
-                // Update existing item (e.g., quantity)
                 finalInventory[existingIndex] = {
                     ...finalInventory[existingIndex],
                     quantity: newItem.quantity,
-                    location: newItem.location || finalInventory[existingIndex].location // Update location if provided
+                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : false // Preserve or default
                 };
             } else {
-                // Add new item, ensuring it has an ID
                 finalInventory.push({
                     id: newItem.id || Date.now().toString() + Math.random().toString(36).substring(2, 9),
                     name: newItem.name,
                     quantity: newItem.quantity,
-                    location: newItem.location
+                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : false // Preserve or default
                 });
             }
         });
 
       } else {
-        // If clearing, just use the parsed data
         finalInventory = parsedData.map(item => ({
-          id: item.id || Date.now().toString() + Math.random().toString(36).substring(2, 9), // Generate if missing
+          id: item.id || Date.now().toString() + Math.random().toString(36).substring(2, 9),
           name: item.name,
           quantity: item.quantity,
-          location: item.location
+          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false // Preserve or default
         }));
       }
       
       setInventory(finalInventory);
-      saveInventoryToLocalStorage(finalInventory); // Save the imported data
+      saveInventoryToLocalStorage(finalInventory);
 
       setIsImportModalVisible(false);
       setJsonImportText('');
@@ -202,8 +253,8 @@ const App = () => {
 
   const handleExportJson = () => {
     try {
-      const jsonString = JSON.stringify(inventory, null, 2); // Pretty print JSON
-      // Create a Blob and a URL to trigger download
+      // Ensure isFavorite is included in export
+      const jsonString = JSON.stringify(inventory.map(({ id, name, quantity, isFavorite }) => ({ name, quantity, isFavorite })), null, 2);
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -212,13 +263,20 @@ const App = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url); // Clean up
+      URL.revokeObjectURL(url);
       showAlert('Inventory exported successfully!');
     } catch (error) {
       console.error('Error exporting JSON:', error);
       showAlert('Failed to export JSON.');
     }
   };
+
+  // Sort inventory: favorites first, then by name
+  const sortedInventory = [...inventory].sort((a, b) => {
+    if (a.isFavorite && !b.isFavorite) return -1; // a comes before b if a is favorite and b is not
+    if (!a.isFavorite && b.isFavorite) return 1;  // b comes before a if b is favorite and a is not
+    return a.name.localeCompare(b.name); // Otherwise, sort alphabetically by name
+  });
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans flex flex-col">
@@ -229,72 +287,81 @@ const App = () => {
       </header>
 
       <div className="flex-1 p-4 overflow-y-auto pb-24">
-        {inventory.length === 0 ? (
-          <p className="text-center mt-12 text-lg text-gray-500">No items in inventory. Add some!</p>
-        ) : (
-          // --- TABLE STRUCTURE STARTS HERE ---
-          <div className="overflow-x-auto rounded-xl shadow-md border border-gray-200"> {/* Added wrapper for responsive scrolling and outer border */}
-            <table className="min-w-full bg-white divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Item Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Quantity</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Location</th>
-                  <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {inventory.map(item => (
-                  <tr key={item.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-700">{item.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600">
-                      <span className="font-semibold">{item.quantity}</span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600">{item.location}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <div className="flex justify-center gap-2"> {/* Centered buttons */}
-                        <button
-                          className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
-                          onClick={() => handleUpdateQuantity(item.id, 1)}
-                        >
-                          +
-                        </button>
-                        <button
-                          className="bg-indigo-500 hover:bg-indigo-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
-                          onClick={() => handleUpdateQuantity(item.id, -1)}
-                        >
-                          -
-                        </button>
-                        <button
-                          className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
-                          onClick={() => openEditModal(item)}
-                        >
-                          Edit
-                        </button>
-                        <button
-                          className="bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-3 rounded-lg text-xs shadow-sm transition duration-200 ease-in-out"
-                          onClick={() => handleDeleteItem(item.id)}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          // --- TABLE STRUCTURE ENDS HERE ---
+        {/* --- GRID LAYOUT FOR TILES STARTS HERE --- */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {inventory.length === 0 ? (
+            null
+          ) : (
+            sortedInventory.map(item => ( // Use sortedInventory here
+              <div
+                key={item.id}
+                className="bg-white rounded-xl p-4 shadow-md flex flex-col justify-between cursor-pointer hover:shadow-lg transition duration-200 ease-in-out relative" // Added relative for absolute positioning of star
+              >
+                {/* Star Icon for Favorite */}
+                <button
+                  className="absolute top-2 right-2 p-1 rounded-full bg-gray-100 bg-opacity-70 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-500 z-10"
+                  onClick={(e) => { e.stopPropagation(); toggleFavorite(item.id); }} // Stop propagation
+                  aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                >
+                  {item.isFavorite ? (
+                    // Filled star (yellow)
+                    <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                    </svg>
+                  ) : (
+                    // Outlined star (gray)
+                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                    </svg>
+                  )}
+                </button>
+
+                {/* Apply onDoubleClick to this specific div to prevent button interference */}
+                <div className="flex flex-col flex-grow justify-center" onDoubleClick={() => openEditModal(item)}>
+                  <div className="flex flex-col sm:flex-row justify-between items-center sm:items-baseline gap-x-4 mb-1">
+                    <p className="text-xl sm:text-2xl font-bold text-indigo-700 text-center sm:text-left flex-1">{item.name}</p>
+                    <p className="text-lg sm:text-xl text-indigo-600 text-center sm:text-right">Qty: <span className="font-semibold">{item.quantity}</span></p>
+                  </div>
+                </div>
+
+                <div className="flex w-full mt-auto"> {/* Changed: Added w-full, removed gap-2, justify classes not needed with flex-1 */}
+                  <button
+                    className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
+                    onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, 1); }}
+                  >
+                    +
+                  </button>
+                  <button
+                    className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
+                    onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, -1); }}
+                  >
+                    -
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+
+          {/* ADD NEW ITEM TILE - ALWAYS LAST IN THE GRID */}
+          <button
+            className="bg-white rounded-xl p-4 shadow-md flex flex-col items-center justify-center text-gray-400 hover:text-green-500 hover:border-green-500 border-2 border-dashed transition duration-200 ease-in-out cursor-pointer"
+            style={{ minHeight: '150px' }} // Ensure consistent height with other tiles
+            onClick={() => setAddModalVisible(true)}
+          >
+            <span className="text-6xl font-light mb-2">+</span>
+            <span className="text-lg font-semibold">Add New Item</span>
+          </button>
+          {/* END ADD NEW ITEM TILE */}
+        </div>
+        {/* --- GRID LAYOUT FOR TILES ENDS HERE --- */}
+
+        {inventory.length === 0 && (
+          <p className="text-center mt-12 text-lg text-gray-500">No items in inventory. Click the '+' tile to add some!</p>
         )}
       </div>
 
+      {/* Moved global action buttons to be consistent with the new tile layout */}
       <div className="fixed bottom-6 left-6 right-6 flex flex-col sm:flex-row gap-3">
-        <button
-          className="flex-1 bg-green-500 hover:bg-green-600 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition duration-200 ease-in-out z-10"
-          onClick={() => setAddModalVisible(true)}
-        >
-          Add New Item
-        </button>
         <button
           className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition duration-200 ease-in-out z-10"
           onClick={() => setIsImportModalVisible(true)}
@@ -327,12 +394,6 @@ const App = () => {
               type="number"
               value={newItemQuantity}
               onChange={(e) => setNewItemQuantity(e.target.value)}
-            />
-            <input
-              className="w-full p-3 border border-gray-300 rounded-lg mb-6 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Location"
-              value={newItemLocation}
-              onChange={(e) => setNewItemLocation(e.target.value)}
             />
             <div className="flex justify-around gap-4">
               <button
@@ -367,7 +428,7 @@ const App = () => {
               value={editQuantity}
               onChange={(e) => setEditQuantity(e.target.value)}
             />
-            <div className="flex justify-around gap-4">
+            <div className="flex justify-around gap-4 mt-6">
               <button
                 className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
                 onClick={() => setEditModalVisible(false)}
@@ -381,51 +442,45 @@ const App = () => {
                 Save Changes
               </button>
             </div>
+            <button
+              className="w-full bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out mt-4"
+              onClick={() => handleDeleteItem(editingItem.id)}
+            >
+              Delete Item
+            </button>
           </div>
         </div>
       )}
 
-      {/* Import JSON Modal */}
-      {isImportModalVisible && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-20 p-4">
-          <div className="bg-white rounded-2xl p-8 shadow-xl w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-6 text-gray-900 text-center">Import Inventory from JSON</h2>
-            <textarea
-              className="w-full p-3 border border-gray-300 rounded-lg mb-6 text-base text-gray-900 h-40 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Paste JSON array here, e.g., [{&quot;name&quot;:&quot;Item A&quot;,&quot;quantity&quot;:10,&quot;location&quot;:&quot;Shelf 1&quot;}]"
-              value={jsonImportText}
-              onChange={(e) => setJsonImportText(e.target.value)}
-            ></textarea>
-            <div className="flex justify-around gap-4">
-              <button
-                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
-                onClick={() => setIsImportModalVisible(false)}
-              >
-                Cancel
-              </button>
-              <button
-                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
-                onClick={handleImportJson}
-              >
-                Import Data
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Custom Alert Modal */}
+      {/* Custom Alert Modal - Now also used for Delete Confirmation */}
       {isAlertVisible && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-30 p-4">
           <div className="bg-white rounded-2xl p-8 shadow-xl w-full max-w-sm text-center">
             <h3 className="text-xl font-bold mb-4 text-gray-900">Notification</h3>
             <p className="text-gray-700 mb-6">{alertMessage}</p>
-            <button
-              className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl shadow-md transition duration-200 ease-in-out"
-              onClick={hideAlert}
-            >
-              OK
-            </button>
+            {confirmingDeleteId ? (
+              <div className="flex justify-around gap-4">
+                <button
+                  className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                  onClick={hideAlert}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                  onClick={handleConfirmDeletion}
+                >
+                  Delete
+                </button>
+              </div>
+            ) : (
+              <button
+                className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 px-6 rounded-xl shadow-md transition duration-200 ease-in-out"
+                onClick={hideAlert}
+              >
+                OK
+              </button>
+            )}
           </div>
         </div>
       )}
