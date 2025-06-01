@@ -1,5 +1,5 @@
 {
-  "homepage": "https://github.com/ayubsayyad/my-inventory-app-local",
+"homepage": "https://ayubsayyad.github.io/my-inventory-app-local",
   "name": "my-inventory-app-local",
   "version": "0.1.0",
   "private": true,
@@ -39,7 +39,7 @@
       "last 1 safari version"
     ]
   },
-  "devDependencies": {
+  "devDependencies": {  
     "gh-pages": "^x.x.x"
   }
 }
