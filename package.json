@@ -40,7 +40,6 @@
     ]
   },
   "devDependencies": {
-    "xgh-pages": "^6.3.0",
     "gh-pages": "^x.x.x"
   }
 }
