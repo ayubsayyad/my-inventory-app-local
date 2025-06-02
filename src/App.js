@@ -727,7 +727,7 @@ const App = () => {
         <h1 className="text-2xl font-bold text-gray-900">Family Care Clinic</h1> {/* Updated title */}
       </header>
 
-      <div className="flex-1 p-4 overflow-y-auto pb-24"> {/* Added pb-24 to prevent overlap with bottom bar */}
+      <div className="flex-1 p-4 overflow-y-auto pb-40"> {/* Increased pb-24 to pb-40 */}
         {/* Conditional Rendering based on viewMode */}
         {viewMode === 'tiles' ? (
           /* --- TILE VIEW --- */
@@ -739,7 +739,7 @@ const App = () => {
                 <div
                   key={item.id}
                   data-item-id={item.id} // Custom attribute to easily find element during drag
-                  className={`rounded-xl p-4 shadow-md flex flex-col justify-between cursor-grab hover:shadow-lg transition duration-200 ease-in-out relative aspect-[3/2]
+                  className={`rounded-xl p-4 shadow-md flex flex-col justify-between cursor-grab hover:shadow-lg transition duration-200 ease-in-out relative aspect-[16/9]
                     ${draggedItemId === item.id ? 'opacity-50' : ''}
                     ${dragOverItemId === item.id ? 'border-2 border-blue-500' : ''}
                   `}
@@ -771,17 +771,20 @@ const App = () => {
                   <div className="flex flex-col flex-grow justify-center" onDoubleClick={() => openEditModal(item)}>
                     <div className="flex flex-col sm:flex-row justify-between items-center sm:items-baseline gap-x-4 mb-1">
                       <p className="text-xl sm:text-2xl font-bold text-indigo-700 text-center sm:text-left flex-1">{item.name}</p>
-                      <p className="text-lg sm:text-xl text-indigo-600 text-center sm:text-right">Qty: <span className="font-semibold">{item.quantity}</span></p>
+                      {/* Removed quantity display from here */}
                     </div>
                   </div>
 
-                  <div className="flex w-full mt-auto">
+                  <div className="flex w-full mt-auto items-center justify-center gap-2"> {/* Added gap-2 for spacing */}
                     <button
                       className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
                       onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, 1); }}
                     >
                       +
                     </button>
+                    <p className="text-lg sm:text-xl text-indigo-600 font-semibold text-center w-1/4"> {/* Added w-1/4 for width */}
+                      {item.quantity}
+                    </p>
                     <button
                       className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
                       onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, -1); }}
@@ -881,14 +884,6 @@ const App = () => {
 
       {/* Fixed bottom action bar */}
       <div className="fixed bottom-6 left-6 right-6 flex flex-col sm:flex-row gap-3 p-4 bg-white rounded-xl shadow-lg z-10 justify-center items-center">
-        {/* Add New Item Button */}
-        <button
-          className="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white text-base font-bold py-2 px-4 rounded-xl shadow-md transition duration-200 ease-in-out"
-          onClick={() => setAddModalVisible(true)}
-        >
-          Add New Item
-        </button>
-
         {/* Search Bar */}
         <div className="w-full sm:flex-1 mt-3 sm:mt-0">
           <input
@@ -902,6 +897,17 @@ const App = () => {
 
         {/* View Mode and JSON Icons */}
         <div className="flex gap-2 mt-3 sm:mt-0">
+          {/* Add New Item Icon Button */}
+          <button
+            className="bg-green-500 hover:bg-green-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out"
+            onClick={() => setAddModalVisible(true)}
+            aria-label="Add New Item"
+          >
+            {/* Plus Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path>
+            </svg>
+          </button>
           {/* Tile View Icon Button */}
           <button
             className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out ${
