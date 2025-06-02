@@ -49,6 +49,63 @@ const COLORS = [
   '#A9A9A9', // Dark Gray
 ];
 
+// Default master list from AUGMENTIN 457MG.txt
+const DEFAULT_MASTER_LIST = [
+  "AUGMENTIN 457MG",
+  "AUGMENTIN 228.5MG",
+  "AGUCLAV",
+  "MAXIMILIAN- DDS",
+  "MEGA-CV 228.5",
+  "MEGA-CV 457MG",
+  "CALPOL DROP",
+  "ASCOTOR LS JUNIOR",
+  "SPID COLD-P",
+  "SYRUP A TO Z",
+  "SYRUP VENTILEX A",
+  "SYRUP ARISTOKOF DM+",
+  "SYRUP PLANOKUF",
+  "SYRUP CALPOL 250",
+  "SYRUP ZIMOL-I",
+  "SYRUP CODODEX-LC",
+  "SYRUP FLUMONT-LC",
+  "Tab- CYRA",
+  "Tab-SPID COLD",
+  "Tab-CONOS-25",
+  "Tab-SARTIDOL",
+  "Tab-ONDET-MD",
+  "Tab-LOMO-D",
+  "Tab-PANTATAC DSR",
+  "TAB-ZENKIND -OZ",
+  "Tab-OFLOTAS-OZ",
+  "Tab-RABITOREMED-DSR",
+  "Tab-RABITAC-DSR",
+  "Tab.RIBJOP-DSR",
+  "Tab-RABEZ 20",
+  "CAPSULE-PSYLAX INGA",
+  "MIC GERMINA",
+  "SYRUP CYRA-MPS",
+  "SYRUP CONSTIPAC PLUS",
+  "Tab-MONTINA-FX",
+  "Tab-BILAZAP M",
+  "Tab-FLUMONT-LC",
+  "EAR DROPS",
+  "Tab-ACECLORAN MR",
+  "TAB-FLUMONT-LC KIND",
+  "Tab-PREGANOX NT",
+  "Tab-LYSOFLAM",
+  "Tab- LYSOFLAM MR",
+  "Tab- LYSOFLAM MR FORTE",
+  "Tab-LYSOSPAS",
+  "ENERGY DRINK",
+  "Tab-PLEOFROL 60K",
+  "SACHET BLUVIT-D",
+  "SACHET NUCACIUM",
+  "Tab-CALPOL 650",
+  "Tab-CALPOL 500",
+  "Tab-DOLOBRAKE-MR",
+  "Tab-PLARICA"
+];
+
 
 // Main App Component
 const App = () => {
@@ -66,9 +123,10 @@ const App = () => {
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
   const [jsonImportText, setJsonImportText] = useState('');
   const [viewMode, setViewMode] = useState('tiles'); // New state: 'tiles' or 'table'
+  const [searchTerm, setSearchTerm] = useState(''); // New state for search term
 
   // New states for item master / autocomplete
-  const [masterItemNames, setMasterItemNames] = useState([]); // Stores all unique item names ever added
+  const [masterItemNames, setMasterItemNames] = useState([]);
   const [nameSuggestions, setNameSuggestions] = useState([]);
   const [showNameSuggestions, setShowNameSuggestions] = useState(false);
   const nameInputRef = useRef(null); // Ref for the item name input
@@ -76,6 +134,13 @@ const App = () => {
   // New states for drag and drop
   const [draggedItemId, setDraggedItemId] = useState(null);
   const [dragOverItemId, setDragOverItemId] = useState(null);
+
+  // New state for master list upload modal
+  const [isMasterListModalVisible, setIsMasterListModalVisible] = useState(false);
+  const masterListFileInputRef = useRef(null);
+
+  // New state for sorting in table view: { column: 'name' | 'quantity', direction: 'asc' | 'desc' }
+  const [sortConfig, setSortConfig] = useState({ column: null, direction: 'asc' });
 
 
   // Function to show custom alert message
@@ -91,11 +156,36 @@ const App = () => {
     setConfirmingDeleteId(null); // Crucial: Clear confirming ID when alert is hidden
   };
 
+  // Function to generate random items
+  const generateRandomItems = (count) => {
+    const items = [];
+    const availableNames = [...DEFAULT_MASTER_LIST]; // Use a copy to avoid modifying the original
+    for (let i = 0; i < count; i++) {
+      const randomNameIndex = Math.floor(Math.random() * availableNames.length);
+      const name = availableNames.splice(randomNameIndex, 1)[0] || `Random Item ${i + 1}`; // Remove selected name
+
+      const randomQuantity = Math.floor(Math.random() * 100) + 1; // 1 to 100
+      const randomColor = COLORS[Math.floor(Math.random() * COLORS.length)];
+      const isFavorite = Math.random() > 0.5; // 50% chance
+
+      items.push({
+        id: Date.now().toString() + i, // Ensure unique ID even if Date.now() is same
+        name: name,
+        quantity: randomQuantity,
+        isFavorite: isFavorite,
+        color: randomColor,
+      });
+    }
+    return items;
+  };
+
   // Data Loading from Local Storage on Mount
   useEffect(() => {
     console.log("App component mounted. Current inventory state (initial):", inventory); // Debug log
     try {
       const storedInventory = localStorage.getItem('inventory');
+      let initialInventory = [];
+
       if (storedInventory) {
         const parsedInventory = JSON.parse(storedInventory);
         // Ensure old items get isFavorite and color properties if missing
@@ -104,23 +194,42 @@ const App = () => {
           isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false, // Default to false if not present
           color: item.hasOwnProperty('color') ? item.color : COLORS[COLORS.length - 1] // Default to last palette color if not present
         }));
-
-        // Re-sort on load to ensure favorites are at the top
-        const favorites = inventoryWithDefaults.filter(item => item.isFavorite);
-        const nonFavorites = inventoryWithDefaults.filter(item => !item.isFavorite);
-        setInventory([...favorites, ...nonFavorites]);
-
-        console.log("Inventory loaded from local storage:", [...favorites, ...nonFavorites]); // Debug log
+        initialInventory = inventoryWithDefaults;
+        console.log("Inventory loaded from local storage:", initialInventory); // Debug log
       } else {
-        console.log("No inventory found in local storage."); // Debug log
+        // If local storage is empty, add 5 random items
+        const randomItems = generateRandomItems(5);
+        initialInventory = randomItems;
+        saveInventoryToLocalStorage(randomItems); // Save generated items to local storage
+        console.log("No inventory found in local storage. Added 5 random items:", randomItems); // Debug log
       }
 
+      // Re-sort on load to ensure favorites are at the top
+      const favorites = initialInventory.filter(item => item.isFavorite);
+      const nonFavorites = initialInventory.filter(item => !item.isFavorite);
+      setInventory([...favorites, ...nonFavorites]);
+
+
+      // Load master items, or use default if none found
       const storedMasterItems = localStorage.getItem('masterItems');
-      if (storedMasterItems) {
-        setMasterItemNames(JSON.parse(storedMasterItems));
-        console.log("Master items loaded from local storage:", JSON.parse(storedMasterItems));
+      let parsedMasterItems = [];
+      try {
+        if (storedMasterItems) {
+          parsedMasterItems = JSON.parse(storedMasterItems);
+        }
+      } catch (e) {
+        console.error("Error parsing stored master items, using default:", e);
+        // If parsing fails, parsedMasterItems remains an empty array, which is fine for the next check
+      }
+
+      if (parsedMasterItems.length > 0) {
+        setMasterItemNames(parsedMasterItems);
+        console.log("Master items loaded from local storage:", parsedMasterItems);
       } else {
-        console.log("No master items found in local storage.");
+        // Set default master list if nothing in local storage or parsing failed
+        setMasterItemNames(DEFAULT_MASTER_LIST);
+        saveMasterItemsToLocalStorage(DEFAULT_MASTER_LIST); // Save default to local storage
+        console.log("Default master items loaded and saved to local storage:", DEFAULT_MASTER_LIST);
       }
 
     } catch (error) {
@@ -129,12 +238,29 @@ const App = () => {
     }
   }, []); // Empty dependency array means this runs once on component mount
 
-  // Update master items whenever inventory changes
+  // Update master items whenever inventory changes (merging with default list)
   useEffect(() => {
-    const uniqueNames = [...new Set(inventory.map(item => item.name))];
-    setMasterItemNames(uniqueNames);
-    saveMasterItemsToLocalStorage(uniqueNames);
-  }, [inventory]);
+    // Get unique names from current inventory
+    const namesFromInventory = inventory.map(item => item.name);
+    
+    // Combine names from inventory and default list
+    const allPossibleNames = new Set([
+      ...DEFAULT_MASTER_LIST, // Always include default names
+      ...namesFromInventory   // Include names from current inventory
+    ]);
+
+    const uniqueAndSortedNames = [...allPossibleNames].sort();
+
+    // Only update and save if the combined and sorted list is different from the current masterItemNames
+    // This prevents infinite loops and unnecessary local storage writes.
+    // We compare against the *current* state of masterItemNames.
+    if (JSON.stringify(uniqueAndSortedNames) !== JSON.stringify([...masterItemNames].sort())) { // Clone masterItemNames before sorting for comparison
+        setMasterItemNames(uniqueAndSortedNames);
+        saveMasterItemsToLocalStorage(uniqueAndSortedNames);
+        console.log("Master item names updated to:", uniqueAndSortedNames); // Debug log
+    }
+  }, [inventory]); // Only depend on inventory. masterItemNames is the state being set.
+
 
   // Inventory Management Functions (Local Storage Operations)
 
@@ -396,6 +522,8 @@ const App = () => {
   const handleNewItemNameChange = (e) => {
     const value = e.target.value;
     setNewItemName(value);
+    console.log("Input value:", value); // Debug log
+    console.log("masterItemNames at time of input:", masterItemNames); // Debug log
 
     if (value.length > 0) {
       const filteredSuggestions = masterItemNames.filter(name =>
@@ -403,9 +531,12 @@ const App = () => {
       );
       setNameSuggestions(filteredSuggestions);
       setShowNameSuggestions(true);
+      console.log("Filtered suggestions:", filteredSuggestions); // Debug log
+      console.log("Show suggestions:", true); // Debug log
     } else {
       setNameSuggestions([]);
       setShowNameSuggestions(false);
+      console.log("Show suggestions:", false); // Debug log
     }
   };
 
@@ -442,7 +573,7 @@ const App = () => {
     if (dragOverItemId === id) {
       setDragOverItemId(null); // Clear drag over visual feedback
     }
-  };
+    };
 
   const handleDrop = (e, targetId) => {
     e.preventDefault();
@@ -494,6 +625,99 @@ const App = () => {
     setDragOverItemId(null);
   };
 
+  // --- Master List Upload Functions ---
+  const handleMasterListUpload = () => {
+    const file = masterListFileInputRef.current.files[0];
+    if (!file) {
+      showAlert('Please select a text file to upload.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target.result;
+        const newNames = text.split('\n')
+                              .map(name => name.trim())
+                              .filter(name => name.length > 0); // Filter out empty lines
+
+        // Merge with existing master names and ensure uniqueness
+        const updatedMasterNames = [...new Set([...masterItemNames, ...newNames])];
+        setMasterItemNames(updatedMasterNames);
+        saveMasterItemsToLocalStorage(updatedMasterNames);
+
+        setIsMasterListModalVisible(false);
+        showAlert('Master list uploaded successfully!');
+      } catch (error) {
+        console.error('Error reading master list file:', error);
+        showAlert('Failed to read master list file. Please ensure it is a valid text file.');
+      }
+    };
+    reader.onerror = () => {
+      showAlert('Error reading file.');
+    };
+    reader.readAsText(file);
+  };
+
+  // Filtered inventory based on search term
+  const filteredInventory = inventory.filter(item =>
+    item.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Sorting logic for table view
+  const sortedInventory = React.useMemo(() => {
+    let sortableItems = [...filteredInventory]; // Start with filtered items
+    if (sortConfig.column !== null) {
+      sortableItems.sort((a, b) => {
+        let aValue = a[sortConfig.column];
+        let bValue = b[sortConfig.column];
+
+        // Handle string comparison for 'name'
+        if (sortConfig.column === 'name') {
+          aValue = String(aValue).toLowerCase();
+          bValue = String(bValue).toLowerCase();
+          if (aValue < bValue) {
+            return sortConfig.direction === 'asc' ? -1 : 1;
+          }
+          if (aValue > bValue) {
+            return sortConfig.direction === 'asc' ? 1 : -1;
+          }
+          return 0;
+        }
+        // Handle numeric comparison for 'quantity'
+        else if (sortConfig.column === 'quantity') {
+          aValue = Number(aValue);
+          bValue = Number(bValue);
+          return sortConfig.direction === 'asc' ? aValue - bValue : bValue - aValue;
+        }
+        return 0; // No sorting for other columns
+      });
+    }
+    return sortableItems;
+  }, [filteredInventory, sortConfig]); // Re-sort whenever filteredInventory or sortConfig changes
+
+  // Handle sort click
+  const handleSort = (columnName) => {
+    setSortConfig(prevSortConfig => {
+      let direction = 'asc';
+      if (prevSortConfig.column === columnName && prevSortConfig.direction === 'asc') {
+        direction = 'desc';
+      } else if (prevSortConfig.column === columnName && prevSortConfig.direction === 'desc') {
+        // If already sorted descending, reset sorting
+        return { column: null, direction: 'asc' };
+      }
+      return { column: columnName, direction: direction };
+    });
+  };
+
+  // Helper to render sort indicator
+  const getSortIndicator = (columnName) => {
+    if (sortConfig.column === columnName) {
+      return sortConfig.direction === 'asc' ? ' ▲' : ' ▼';
+    }
+    return '';
+  };
+
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans flex flex-col">
@@ -501,70 +725,21 @@ const App = () => {
 
       <header className="p-4 bg-white border-b border-gray-200 shadow-sm flex justify-center items-center relative">
         <h1 className="text-2xl font-bold text-gray-900">Family Care Clinic</h1> {/* Updated title */}
-        {/* New Load/Share JSON and View Mode Icon Buttons */}
-        <div className="absolute top-4 right-4 flex gap-2">
-          {/* Tile View Icon Button */}
-          <button
-            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10 ${
-              viewMode === 'tiles' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-            onClick={() => setViewMode('tiles')}
-            aria-label="Switch to Tile View"
-          >
-            {/* Grid Icon for Tile View */}
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
-            </svg>
-          </button>
-          {/* Table View Icon Button */}
-          <button
-            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10 ${
-              viewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-            }`}
-            onClick={() => setViewMode('table')}
-            aria-label="Switch to Table View"
-          >
-            {/* List/Table Icon for Table View */}
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
-            </svg>
-          </button>
-          <button
-            className="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10"
-            onClick={() => setIsImportModalVisible(true)}
-            aria-label="Load JSON"
-          >
-            {/* Upload/Import Icon */}
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
-            </svg>
-          </button>
-          <button
-            className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10"
-            onClick={handleExportJson}
-            aria-label="Share JSON"
-          >
-            {/* Share Icon */}
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.882 13.07 9.283 13 9.683 13h4.634c.4 0 .799.07 1.098.342l3.682 2.658c.315.227.34.67.054.912l-1.429 1.258c-.31.272-.75.246-1.034-.06L14 16l-3.292 3.292a1 1 0 01-1.414 0l-1.414-1.414a1 1 0 010-1.414L8.684 13.342z"></path>
-            </svg>
-          </button>
-        </div>
       </header>
 
-      <div className="flex-1 p-4 overflow-y-auto pb-24">
+      <div className="flex-1 p-4 overflow-y-auto pb-24"> {/* Added pb-24 to prevent overlap with bottom bar */}
         {/* Conditional Rendering based on viewMode */}
         {viewMode === 'tiles' ? (
           /* --- TILE VIEW --- */
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {inventory.length === 0 ? (
-              null
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"> {/* Changed to fixed 4 columns on large screens */}
+            {filteredInventory.length === 0 ? (
+              <p className="text-center mt-12 text-lg text-gray-500 col-span-full">No items matching your search. Add some using the button below!</p>
             ) : (
-              inventory.map(item => (
+              filteredInventory.map(item => (
                 <div
                   key={item.id}
                   data-item-id={item.id} // Custom attribute to easily find element during drag
-                  className={`rounded-xl p-4 shadow-md flex flex-col justify-between cursor-grab hover:shadow-lg transition duration-200 ease-in-out relative
+                  className={`rounded-xl p-4 shadow-md flex flex-col justify-between cursor-grab hover:shadow-lg transition duration-200 ease-in-out relative aspect-[3/2]
                     ${draggedItemId === item.id ? 'opacity-50' : ''}
                     ${dragOverItemId === item.id ? 'border-2 border-blue-500' : ''}
                   `}
@@ -617,16 +792,6 @@ const App = () => {
                 </div>
               ))
             )}
-            {/* ADD NEW ITEM TILE - ALWAYS LAST IN THE GRID */}
-            <button
-              className="bg-white rounded-xl p-4 shadow-md flex flex-col items-center justify-center text-gray-400 hover:text-green-500 hover:border-green-500 border-2 border-dashed transition duration-200 ease-in-out cursor-pointer"
-              style={{ minHeight: '150px' }} // Ensure consistent height with other tiles
-              onClick={() => setAddModalVisible(true)}
-            >
-              <span className="text-6xl font-light mb-2">+</span>
-              <span className="text-lg font-semibold">Add New Item</span>
-            </button>
-            {/* END ADD NEW ITEM TILE */}
           </div>
         ) : (
           /* --- TABLE VIEW --- */
@@ -635,19 +800,29 @@ const App = () => {
               <thead className="bg-gray-200 border-b border-gray-300">
                 <tr>
                   <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider rounded-tl-xl">Favorite</th>
-                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider">Item Name</th>
-                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
+                  <th
+                    className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-300 transition duration-150 ease-in-out"
+                    onClick={() => handleSort('name')}
+                  >
+                    Item Name {getSortIndicator('name')}
+                  </th>
+                  <th
+                    className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider cursor-pointer hover:bg-gray-300 transition duration-150 ease-in-out"
+                    onClick={() => handleSort('quantity')}
+                  >
+                    Quantity {getSortIndicator('quantity')}
+                  </th>
                   <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider rounded-tr-xl">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {inventory.length === 0 ? (
+                {sortedInventory.length === 0 ? (
                   <tr>
-                    <td colSpan="4" className="text-center py-4 text-gray-500">No items in inventory.</td>
+                    <td colSpan="4" className="text-center py-4 text-gray-500">No items matching your search. Add some using the button below!</td>
                   </tr>
                 ) : (
-                  // Use 'inventory' directly for table view
-                  inventory.map(item => (
+                  // Use 'sortedInventory' for table view
+                  sortedInventory.map(item => (
                     <tr
                       key={item.id}
                       className="border-b border-gray-200 hover:bg-gray-50 transition duration-150 ease-in-out"
@@ -702,11 +877,91 @@ const App = () => {
             </table>
           </div>
         )}
-
-        {inventory.length === 0 && (
-          <p className="text-center mt-12 text-lg text-gray-500">No items in inventory. Click the '+' tile to add some!</p>
-        )}
       </div>
+
+      {/* Fixed bottom action bar */}
+      <div className="fixed bottom-6 left-6 right-6 flex flex-col sm:flex-row gap-3 p-4 bg-white rounded-xl shadow-lg z-10 justify-center items-center">
+        {/* Add New Item Button */}
+        <button
+          className="w-full sm:w-auto bg-green-500 hover:bg-green-600 text-white text-base font-bold py-2 px-4 rounded-xl shadow-md transition duration-200 ease-in-out"
+          onClick={() => setAddModalVisible(true)}
+        >
+          Add New Item
+        </button>
+
+        {/* Search Bar */}
+        <div className="w-full sm:flex-1 mt-3 sm:mt-0">
+          <input
+            type="text"
+            placeholder="Search items..."
+            className="w-full p-2 border border-gray-300 rounded-lg text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+
+        {/* View Mode and JSON Icons */}
+        <div className="flex gap-2 mt-3 sm:mt-0">
+          {/* Tile View Icon Button */}
+          <button
+            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out ${
+              viewMode === 'tiles' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            onClick={() => setViewMode('tiles')}
+            aria-label="Switch to Tile View"
+          >
+            {/* Grid Icon for Tile View */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+            </svg>
+          </button>
+          {/* Table View Icon Button */}
+          <button
+            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out ${
+              viewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            onClick={() => setViewMode('table')}
+            aria-label="Switch to Table View"
+          >
+            {/* List/Table Icon for Table View */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+            </svg>
+          </button>
+          <button
+            className="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out"
+            onClick={() => setIsImportModalVisible(true)}
+            aria-label="Load JSON"
+          >
+            {/* Upload/Import Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+            </svg>
+          </button>
+          {/* New: Upload Master List Button */}
+          <button
+            className="bg-orange-500 hover:bg-orange-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out"
+            onClick={() => setIsMasterListModalVisible(true)}
+            aria-label="Upload Master List"
+          >
+            {/* Document Upload Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+          </button>
+          <button
+            className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out"
+            onClick={handleExportJson}
+            aria-label="Share JSON"
+          >
+            {/* Share Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.882 13.07 9.283 13 9.683 13h4.634c.4 0 .799.07 1.098.342l3.682 2.658c.315.227.34.67.054.912l-1.429 1.258c-.31.272-.75.246-1.034-.06L14 16l-3.292 3.292a1 1 0 01-1.414 0l-1.414-1.414a1 1 0 010-1.414L8.684 13.342z"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
 
       {/* Add New Item Modal */}
       {isAddModalVisible && (
@@ -843,6 +1098,36 @@ const App = () => {
                 onClick={handleImportJson}
               >
                 Import Data
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Master List Upload Modal */}
+      {isMasterListModalVisible && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-20 p-4">
+          <div className="bg-white rounded-2xl p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900 text-center">Upload Item Master List</h2>
+            <p className="text-gray-700 mb-4 text-center">Please upload a text file (.txt) with one item name per line.</p>
+            <input
+              type="file"
+              accept=".txt"
+              ref={masterListFileInputRef}
+              className="w-full p-3 border border-gray-300 rounded-lg mb-6 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <div className="flex justify-around gap-4">
+              <button
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                onClick={() => setIsMasterListModalVisible(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="flex-1 bg-orange-500 hover:bg-orange-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                onClick={handleMasterListUpload}
+              >
+                Upload List
               </button>
             </div>
           </div>
