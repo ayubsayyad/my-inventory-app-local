@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 // Helper function to save inventory to local storage
 const saveInventoryToLocalStorage = (inventoryData) => {
@@ -11,12 +11,52 @@ const saveInventoryToLocalStorage = (inventoryData) => {
   }
 };
 
+// Helper function to save master item names to local storage
+const saveMasterItemsToLocalStorage = (masterItemsData) => {
+  try {
+    localStorage.setItem('masterItems', JSON.stringify(masterItemsData));
+    console.log("Master items local storage updated:", masterItemsData); // Debug log
+  } catch (error) {
+    console.error("Error saving master items to local storage:", error);
+  }
+};
+
+// Define a fixed palette of slightly darker pastel colors
+const COLORS = [
+  '#FFC0CB', // Pink
+  '#FFB6C1', // Light Pink
+  '#B0C4DE', // Light Steel Blue
+  '#C6A4D9', // Lavender (darker)
+  '#87CEEB', // Sky Blue
+  '#ADD8E6', // Light Blue
+  '#AFEEEE', // Pale Turquoise
+  '#7FFFD4', // Aquamarine
+  '#90EE90', // Light Green
+  '#ADFF2F', // Green Yellow
+  '#FFFFE0', // Light Yellow
+  '#FFD700', // Gold
+  '#FFA07A', // Light Salmon
+  '#FF7F50', // Coral
+  '#CD5C5C', // Indian Red
+  '#DDA0DD', // Plum
+  '#DA70D6', // Orchid
+  '#EE82EE', // Violet
+  '#D8BFD8', // Thistle
+  '#F0E68C', // Khaki
+  '#EEDD82', // Light Goldenrod
+  '#BDB76B', // Dark Khaki
+  '#C0C0C0', // Silver
+  '#A9A9A9', // Dark Gray
+];
+
+
 // Main App Component
 const App = () => {
   const [inventory, setInventory] = useState([]);
   const [isAddModalVisible, setAddModalVisible] = useState(false);
   const [newItemName, setNewItemName] = useState('');
   const [newItemQuantity, setNewItemQuantity] = useState('');
+  const [newItemColor, setNewItemColor] = useState(COLORS[COLORS.length - 1]); // Default to the last color in the palette
   const [isEditModalVisible, setEditModalVisible] = useState(false);
   const [editingItem, setEditingItem] = useState(null); // This holds the item being edited
   const [editQuantity, setEditQuantity] = useState('');
@@ -25,6 +65,18 @@ const App = () => {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState(null); // Stores ID for pending deletion
   const [isImportModalVisible, setIsImportModalVisible] = useState(false);
   const [jsonImportText, setJsonImportText] = useState('');
+  const [viewMode, setViewMode] = useState('tiles'); // New state: 'tiles' or 'table'
+
+  // New states for item master / autocomplete
+  const [masterItemNames, setMasterItemNames] = useState([]); // Stores all unique item names ever added
+  const [nameSuggestions, setNameSuggestions] = useState([]);
+  const [showNameSuggestions, setShowNameSuggestions] = useState(false);
+  const nameInputRef = useRef(null); // Ref for the item name input
+
+  // New states for drag and drop
+  const [draggedItemId, setDraggedItemId] = useState(null);
+  const [dragOverItemId, setDragOverItemId] = useState(null);
+
 
   // Function to show custom alert message
   const showAlert = (message) => {
@@ -46,21 +98,43 @@ const App = () => {
       const storedInventory = localStorage.getItem('inventory');
       if (storedInventory) {
         const parsedInventory = JSON.parse(storedInventory);
-        // Ensure old items get isFavorite property if it's missing
-        const inventoryWithFavorites = parsedInventory.map(item => ({
+        // Ensure old items get isFavorite and color properties if missing
+        const inventoryWithDefaults = parsedInventory.map(item => ({
           ...item,
-          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false // Default to false if not present
+          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false, // Default to false if not present
+          color: item.hasOwnProperty('color') ? item.color : COLORS[COLORS.length - 1] // Default to last palette color if not present
         }));
-        setInventory(inventoryWithFavorites);
-        console.log("Inventory loaded from local storage:", inventoryWithFavorites); // Debug log
+
+        // Re-sort on load to ensure favorites are at the top
+        const favorites = inventoryWithDefaults.filter(item => item.isFavorite);
+        const nonFavorites = inventoryWithDefaults.filter(item => !item.isFavorite);
+        setInventory([...favorites, ...nonFavorites]);
+
+        console.log("Inventory loaded from local storage:", [...favorites, ...nonFavorites]); // Debug log
       } else {
         console.log("No inventory found in local storage."); // Debug log
       }
+
+      const storedMasterItems = localStorage.getItem('masterItems');
+      if (storedMasterItems) {
+        setMasterItemNames(JSON.parse(storedMasterItems));
+        console.log("Master items loaded from local storage:", JSON.parse(storedMasterItems));
+      } else {
+        console.log("No master items found in local storage.");
+      }
+
     } catch (error) {
       console.error("Error loading from local storage:", error);
       showAlert("Failed to load inventory from local storage.");
     }
   }, []); // Empty dependency array means this runs once on component mount
+
+  // Update master items whenever inventory changes
+  useEffect(() => {
+    const uniqueNames = [...new Set(inventory.map(item => item.name))];
+    setMasterItemNames(uniqueNames);
+    saveMasterItemsToLocalStorage(uniqueNames);
+  }, [inventory]);
 
   // Inventory Management Functions (Local Storage Operations)
 
@@ -76,21 +150,48 @@ const App = () => {
       return;
     }
 
-    const newItem = {
-      id: Date.now().toString(), // Simple unique ID for local storage
-      name: newItemName,
-      quantity: quantityNum,
-      isFavorite: false, // New items are not favorited by default
-    };
+    // Check if an item with this name already exists in the current inventory
+    const existingItemIndex = inventory.findIndex(
+      item => item.name.toLowerCase() === newItemName.toLowerCase()
+    );
 
-    const updatedInventory = [...inventory, newItem];
-    setInventory(updatedInventory);
-    saveInventoryToLocalStorage(updatedInventory); // Save to local storage
+    let updatedInventory;
+    let message;
+
+    if (existingItemIndex > -1) {
+      // If item exists, update its quantity
+      updatedInventory = inventory.map((item, index) =>
+        index === existingItemIndex
+          ? { ...item, quantity: item.quantity + quantityNum }
+          : item
+      );
+      message = `Quantity for "${newItemName}" updated successfully!`;
+    } else {
+      // If item does not exist, add a new one
+      const newItem = {
+        id: Date.now().toString(), // Simple unique ID for local storage
+        name: newItemName,
+        quantity: quantityNum,
+        isFavorite: false, // New items are not favorited by default
+        color: newItemColor, // Include the selected color
+      };
+      updatedInventory = [...inventory, newItem];
+      message = 'Item added successfully!';
+    }
+
+    // Re-sort after adding/updating to ensure favorites are at the top
+    const favorites = updatedInventory.filter(item => item.isFavorite);
+    const nonFavorites = updatedInventory.filter(item => !item.isFavorite);
+    const finalInventory = [...favorites, ...nonFavorites];
+
+    setInventory(finalInventory);
+    saveInventoryToLocalStorage(finalInventory); // Save to local storage
 
     setAddModalVisible(false);
     setNewItemName('');
     setNewItemQuantity('');
-    showAlert('Item added successfully!');
+    setNewItemColor(COLORS[COLORS.length - 1]); // Reset color to default for next add
+    showAlert(message);
   };
 
   const handleUpdateQuantity = (id, delta) => {
@@ -104,6 +205,7 @@ const App = () => {
         return;
     }
 
+    // No need to re-sort here as quantity change doesn't affect favorite status
     setInventory(updatedInventory);
     saveInventoryToLocalStorage(updatedInventory);
   };
@@ -135,9 +237,13 @@ const App = () => {
 
     try {
       const updatedInventory = inventory.filter(item => item.id !== idToDelete);
-      console.log("Inventory before set (after filter):", updatedInventory); // Debug log
-      setInventory(updatedInventory); // Update React state
-      saveInventoryToLocalStorage(updatedInventory); // Persist to local storage
+      // Re-sort after deletion to ensure favorites are at the top
+      const favorites = updatedInventory.filter(item => item.isFavorite);
+      const nonFavorites = updatedInventory.filter(item => !item.isFavorite);
+      const finalInventory = [...favorites, ...nonFavorites];
+
+      setInventory(finalInventory); // Update React state
+      saveInventoryToLocalStorage(finalInventory); // Persist to local storage
       
       setEditModalVisible(false); // Close edit modal
       setEditingItem(null); // Clear editing item state
@@ -150,14 +256,20 @@ const App = () => {
     }
   };
 
-  // Function to toggle favorite status
+  // Function to toggle favorite status and reorder
   const toggleFavorite = (id) => {
-    console.log("Toggling favorite for item ID:", id); // Debug log
-    const updatedInventory = inventory.map(item =>
+    const updatedItems = inventory.map(item =>
       item.id === id ? { ...item, isFavorite: !item.isFavorite } : item
     );
-    setInventory(updatedInventory);
-    saveInventoryToLocalStorage(updatedInventory);
+
+    // Separate favorites and non-favorites, preserving their relative order
+    const favorites = updatedItems.filter(item => item.isFavorite);
+    const nonFavorites = updatedItems.filter(item => !item.isFavorite);
+
+    // Recombine to ensure favorites are always at the top
+    const newOrder = [...favorites, ...nonFavorites];
+    setInventory(newOrder);
+    saveInventoryToLocalStorage(newOrder);
   };
 
 
@@ -188,6 +300,7 @@ const App = () => {
     const updatedInventory = inventory.map(item =>
       item.id === editingItem.id ? { ...item, quantity: newQuantity } : item
     );
+    // No need to re-sort here as quantity change doesn't affect favorite status
     setInventory(updatedInventory);
     saveInventoryToLocalStorage(updatedInventory);
 
@@ -212,19 +325,21 @@ const App = () => {
       if (!confirmClear) {
         finalInventory = [...inventory];
         parsedData.forEach(newItem => {
-            const existingIndex = finalInventory.findIndex(item => item.name === newItem.name);
+            const existingIndex = finalInventory.findIndex(item => item.name.toLowerCase() === newItem.name.toLowerCase());
             if (existingIndex > -1) {
                 finalInventory[existingIndex] = {
                     ...finalInventory[existingIndex],
                     quantity: newItem.quantity,
-                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : false // Preserve or default
+                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : finalInventory[existingIndex].isFavorite, // Preserve or default
+                    color: newItem.hasOwnProperty('color') ? newItem.color : finalInventory[existingIndex].color // Preserve or default
                 };
             } else {
                 finalInventory.push({
                     id: newItem.id || Date.now().toString() + Math.random().toString(36).substring(2, 9),
                     name: newItem.name,
                     quantity: newItem.quantity,
-                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : false // Preserve or default
+                    isFavorite: newItem.hasOwnProperty('isFavorite') ? newItem.isFavorite : false, // Preserve or default
+                    color: newItem.hasOwnProperty('color') ? newItem.color : COLORS[COLORS.length - 1] // Preserve or default
                 });
             }
         });
@@ -234,12 +349,18 @@ const App = () => {
           id: item.id || Date.now().toString() + Math.random().toString(36).substring(2, 9),
           name: item.name,
           quantity: item.quantity,
-          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false // Preserve or default
+          isFavorite: item.hasOwnProperty('isFavorite') ? item.isFavorite : false, // Preserve or default
+          color: item.hasOwnProperty('color') ? item.color : COLORS[COLORS.length - 1] // Preserve or default
         }));
       }
       
-      setInventory(finalInventory);
-      saveInventoryToLocalStorage(finalInventory);
+      // Re-sort after import to ensure favorites are at the top
+      const favorites = finalInventory.filter(item => item.isFavorite);
+      const nonFavorites = finalInventory.filter(item => !item.isFavorite);
+      const sortedImportedInventory = [...favorites, ...nonFavorites];
+
+      setInventory(sortedImportedInventory);
+      saveInventoryToLocalStorage(sortedImportedInventory);
 
       setIsImportModalVisible(false);
       setJsonImportText('');
@@ -253,8 +374,8 @@ const App = () => {
 
   const handleExportJson = () => {
     try {
-      // Ensure isFavorite is included in export
-      const jsonString = JSON.stringify(inventory.map(({ id, name, quantity, isFavorite }) => ({ name, quantity, isFavorite })), null, 2);
+      // Ensure isFavorite and color are included in export
+      const jsonString = JSON.stringify(inventory.map(({ id, name, quantity, isFavorite, color }) => ({ name, quantity, isFavorite, color })), null, 2);
       const blob = new Blob([jsonString], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -271,123 +392,354 @@ const App = () => {
     }
   };
 
-  // Sort inventory: favorites first, then by name
-  const sortedInventory = [...inventory].sort((a, b) => {
-    if (a.isFavorite && !b.isFavorite) return -1; // a comes before b if a is favorite and b is not
-    if (!a.isFavorite && b.isFavorite) return 1;  // b comes before a if b is favorite and a is not
-    return a.name.localeCompare(b.name); // Otherwise, sort alphabetically by name
-  });
+  // Handle input change for item name with suggestions
+  const handleNewItemNameChange = (e) => {
+    const value = e.target.value;
+    setNewItemName(value);
+
+    if (value.length > 0) {
+      const filteredSuggestions = masterItemNames.filter(name =>
+        name.toLowerCase().includes(value.toLowerCase())
+      );
+      setNameSuggestions(filteredSuggestions);
+      setShowNameSuggestions(true);
+    } else {
+      setNameSuggestions([]);
+      setShowNameSuggestions(false);
+    }
+  };
+
+  // Handle selecting a suggestion
+  const handleSelectSuggestion = (suggestion) => {
+    setNewItemName(suggestion);
+    setNameSuggestions([]);
+    setShowNameSuggestions(false);
+  };
+
+  // Handle blur event for input to hide suggestions after a short delay
+  const handleInputBlur = () => {
+    // Delay hiding to allow click on suggestion to register
+    setTimeout(() => {
+      setShowNameSuggestions(false);
+    }, 100);
+  };
+
+  // --- Drag and Drop Handlers ---
+  const handleDragStart = (e, id) => {
+    e.dataTransfer.setData('text/plain', id); // Set data to transfer (the item's ID)
+    setDraggedItemId(id); // Store the ID of the item being dragged
+    e.currentTarget.classList.add('opacity-50'); // Add visual feedback for dragged item
+  };
+
+  const handleDragOver = (e, id) => {
+    e.preventDefault(); // Necessary to allow dropping
+    if (draggedItemId !== id) {
+      setDragOverItemId(id); // Set the ID of the item being dragged over
+    }
+  };
+
+  const handleDragLeave = (e, id) => {
+    if (dragOverItemId === id) {
+      setDragOverItemId(null); // Clear drag over visual feedback
+    }
+  };
+
+  const handleDrop = (e, targetId) => {
+    e.preventDefault();
+    const draggedId = e.dataTransfer.getData('text/plain');
+
+    // Remove opacity from the dragged item
+    const draggedElement = document.querySelector(`[data-item-id="${draggedId}"]`);
+    if (draggedElement) {
+      draggedElement.classList.remove('opacity-50');
+    }
+    setDragOverItemId(null); // Clear drag over visual feedback
+
+    if (draggedId === targetId || !draggedId) {
+      return; // Dropped on itself or no item being dragged
+    }
+
+    const draggedItem = inventory.find(item => item.id === draggedId);
+    const targetItem = inventory.find(item => item.id === targetId);
+
+    if (!draggedItem || !targetItem) {
+      console.error("Drag or target item not found.");
+      return;
+    }
+
+    // Enforce rule: Cannot drag an item across favorite/non-favorite sections
+    if (draggedItem.isFavorite !== targetItem.isFavorite) {
+      showAlert(`Cannot move a ${draggedItem.isFavorite ? 'favorite' : 'non-favorite'} item into the ${targetItem.isFavorite ? 'favorite' : 'non-favorite'} section.`);
+      return;
+    }
+
+    // If they are in the same favorite status group, then allow reordering
+    const newInventory = [...inventory];
+    const draggedItemIndex = newInventory.findIndex(item => item.id === draggedId);
+    const targetItemIndex = newInventory.findIndex(item => item.id === targetId);
+
+    // Perform the actual reordering
+    const [itemToMove] = newInventory.splice(draggedItemIndex, 1);
+    newInventory.splice(targetItemIndex, 0, itemToMove);
+
+    setInventory(newInventory);
+    saveInventoryToLocalStorage(newInventory);
+    setDraggedItemId(null);
+  };
+
+  const handleDragEnd = (e) => {
+    // This fires after drop or drag is cancelled
+    e.currentTarget.classList.remove('opacity-50');
+    setDraggedItemId(null);
+    setDragOverItemId(null);
+  };
+
 
   return (
     <div className="min-h-screen bg-gray-100 font-sans flex flex-col">
       {/* Tailwind CSS CDN and custom styles are assumed to be in public/index.html */}
 
       <header className="p-4 bg-white border-b border-gray-200 shadow-sm flex justify-center items-center relative">
-        <h1 className="text-2xl font-bold text-gray-900">My Local Inventory</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Family Care Clinic</h1> {/* Updated title */}
+        {/* New Load/Share JSON and View Mode Icon Buttons */}
+        <div className="absolute top-4 right-4 flex gap-2">
+          {/* Tile View Icon Button */}
+          <button
+            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10 ${
+              viewMode === 'tiles' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            onClick={() => setViewMode('tiles')}
+            aria-label="Switch to Tile View"
+          >
+            {/* Grid Icon for Tile View */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"></path>
+            </svg>
+          </button>
+          {/* Table View Icon Button */}
+          <button
+            className={`p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10 ${
+              viewMode === 'table' ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+            }`}
+            onClick={() => setViewMode('table')}
+            aria-label="Switch to Table View"
+          >
+            {/* List/Table Icon for Table View */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
+            </svg>
+          </button>
+          <button
+            className="bg-blue-500 hover:bg-blue-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10"
+            onClick={() => setIsImportModalVisible(true)}
+            aria-label="Load JSON"
+          >
+            {/* Upload/Import Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path>
+            </svg>
+          </button>
+          <button
+            className="bg-purple-500 hover:bg-purple-600 text-white p-3 rounded-full w-12 h-12 flex items-center justify-center shadow-lg transition duration-200 ease-in-out z-10"
+            onClick={handleExportJson}
+            aria-label="Share JSON"
+          >
+            {/* Share Icon */}
+            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8.684 13.342C8.882 13.07 9.283 13 9.683 13h4.634c.4 0 .799.07 1.098.342l3.682 2.658c.315.227.34.67.054.912l-1.429 1.258c-.31.272-.75.246-1.034-.06L14 16l-3.292 3.292a1 1 0 01-1.414 0l-1.414-1.414a1 1 0 010-1.414L8.684 13.342z"></path>
+            </svg>
+          </button>
+        </div>
       </header>
 
       <div className="flex-1 p-4 overflow-y-auto pb-24">
-        {/* --- GRID LAYOUT FOR TILES STARTS HERE --- */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {inventory.length === 0 ? (
-            null
-          ) : (
-            sortedInventory.map(item => ( // Use sortedInventory here
-              <div
-                key={item.id}
-                className="bg-white rounded-xl p-4 shadow-md flex flex-col justify-between cursor-pointer hover:shadow-lg transition duration-200 ease-in-out relative" // Added relative for absolute positioning of star
-              >
-                {/* Star Icon for Favorite */}
-                <button
-                  className="absolute top-2 right-2 p-1 rounded-full bg-gray-100 bg-opacity-70 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-500 z-10"
-                  onClick={(e) => { e.stopPropagation(); toggleFavorite(item.id); }} // Stop propagation
-                  aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"}
+        {/* Conditional Rendering based on viewMode */}
+        {viewMode === 'tiles' ? (
+          /* --- TILE VIEW --- */
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {inventory.length === 0 ? (
+              null
+            ) : (
+              inventory.map(item => (
+                <div
+                  key={item.id}
+                  data-item-id={item.id} // Custom attribute to easily find element during drag
+                  className={`rounded-xl p-4 shadow-md flex flex-col justify-between cursor-grab hover:shadow-lg transition duration-200 ease-in-out relative
+                    ${draggedItemId === item.id ? 'opacity-50' : ''}
+                    ${dragOverItemId === item.id ? 'border-2 border-blue-500' : ''}
+                  `}
+                  style={{ backgroundColor: item.color }}
+                  draggable="true"
+                  onDragStart={(e) => handleDragStart(e, item.id)}
+                  onDragOver={(e) => handleDragOver(e, item.id)}
+                  onDrop={(e) => handleDrop(e, item.id)}
+                  onDragLeave={(e) => handleDragLeave(e, item.id)}
+                  onDragEnd={handleDragEnd} // Add onDragEnd to reset opacity
                 >
-                  {item.isFavorite ? (
-                    // Filled star (yellow)
-                    <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
-                    </svg>
-                  ) : (
-                    // Outlined star (gray)
-                    <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
-                    </svg>
-                  )}
-                </button>
+                  {/* Star Icon for Favorite */}
+                  <button
+                    className="absolute top-2 right-2 p-1 rounded-full bg-gray-100 bg-opacity-70 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-500 z-10"
+                    onClick={(e) => { e.stopPropagation(); toggleFavorite(item.id); }}
+                    aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                  >
+                    {item.isFavorite ? (
+                      <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                      </svg>
+                    )}
+                  </button>
 
-                {/* Apply onDoubleClick to this specific div to prevent button interference */}
-                <div className="flex flex-col flex-grow justify-center" onDoubleClick={() => openEditModal(item)}>
-                  <div className="flex flex-col sm:flex-row justify-between items-center sm:items-baseline gap-x-4 mb-1">
-                    <p className="text-xl sm:text-2xl font-bold text-indigo-700 text-center sm:text-left flex-1">{item.name}</p>
-                    <p className="text-lg sm:text-xl text-indigo-600 text-center sm:text-right">Qty: <span className="font-semibold">{item.quantity}</span></p>
+                  <div className="flex flex-col flex-grow justify-center" onDoubleClick={() => openEditModal(item)}>
+                    <div className="flex flex-col sm:flex-row justify-between items-center sm:items-baseline gap-x-4 mb-1">
+                      <p className="text-xl sm:text-2xl font-bold text-indigo-700 text-center sm:text-left flex-1">{item.name}</p>
+                      <p className="text-lg sm:text-xl text-indigo-600 text-center sm:text-right">Qty: <span className="font-semibold">{item.quantity}</span></p>
+                    </div>
+                  </div>
+
+                  <div className="flex w-full mt-auto">
+                    <button
+                      className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
+                      onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, 1); }}
+                    >
+                      +
+                    </button>
+                    <button
+                      className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
+                      onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, -1); }}
+                    >
+                      -
+                    </button>
                   </div>
                 </div>
-
-                <div className="flex w-full mt-auto"> {/* Changed: Added w-full, removed gap-2, justify classes not needed with flex-1 */}
-                  <button
-                    className="flex-1 bg-green-500 hover:bg-green-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
-                    onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, 1); }}
-                  >
-                    +
-                  </button>
-                  <button
-                    className="flex-1 bg-red-500 hover:bg-red-600 text-white font-bold py-3 rounded-lg text-lg shadow-md transition duration-200 ease-in-out"
-                    onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, -1); }}
-                  >
-                    -
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-
-          {/* ADD NEW ITEM TILE - ALWAYS LAST IN THE GRID */}
-          <button
-            className="bg-white rounded-xl p-4 shadow-md flex flex-col items-center justify-center text-gray-400 hover:text-green-500 hover:border-green-500 border-2 border-dashed transition duration-200 ease-in-out cursor-pointer"
-            style={{ minHeight: '150px' }} // Ensure consistent height with other tiles
-            onClick={() => setAddModalVisible(true)}
-          >
-            <span className="text-6xl font-light mb-2">+</span>
-            <span className="text-lg font-semibold">Add New Item</span>
-          </button>
-          {/* END ADD NEW ITEM TILE */}
-        </div>
-        {/* --- GRID LAYOUT FOR TILES ENDS HERE --- */}
+              ))
+            )}
+            {/* ADD NEW ITEM TILE - ALWAYS LAST IN THE GRID */}
+            <button
+              className="bg-white rounded-xl p-4 shadow-md flex flex-col items-center justify-center text-gray-400 hover:text-green-500 hover:border-green-500 border-2 border-dashed transition duration-200 ease-in-out cursor-pointer"
+              style={{ minHeight: '150px' }} // Ensure consistent height with other tiles
+              onClick={() => setAddModalVisible(true)}
+            >
+              <span className="text-6xl font-light mb-2">+</span>
+              <span className="text-lg font-semibold">Add New Item</span>
+            </button>
+            {/* END ADD NEW ITEM TILE */}
+          </div>
+        ) : (
+          /* --- TABLE VIEW --- */
+          <div className="overflow-x-auto rounded-xl shadow-md">
+            <table className="min-w-full bg-white rounded-xl">
+              <thead className="bg-gray-200 border-b border-gray-300">
+                <tr>
+                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider rounded-tl-xl">Favorite</th>
+                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider">Item Name</th>
+                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider">Quantity</th>
+                  <th className="py-3 px-4 text-left text-sm font-semibold text-gray-700 uppercase tracking-wider rounded-tr-xl">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {inventory.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-4 text-gray-500">No items in inventory.</td>
+                  </tr>
+                ) : (
+                  // Use 'inventory' directly for table view
+                  inventory.map(item => (
+                    <tr
+                      key={item.id}
+                      className="border-b border-gray-200 hover:bg-gray-50 transition duration-150 ease-in-out"
+                      style={{ backgroundColor: item.color }} // Apply dynamic background color to row
+                      onDoubleClick={() => openEditModal(item)} // Double-click row to edit
+                    >
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <button
+                          className="p-1 rounded-full bg-gray-100 bg-opacity-70 hover:bg-gray-200 focus:outline-none focus:ring-2 focus:ring-yellow-500"
+                          onClick={(e) => { e.stopPropagation(); toggleFavorite(item.id); }}
+                          aria-label={item.isFavorite ? "Remove from favorites" : "Add to favorites"}
+                        >
+                          {item.isFavorite ? (
+                            <svg className="w-5 h-5 text-yellow-400" fill="currentColor" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
+                              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                            </svg>
+                          ) : (
+                            <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.538 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.783.57-1.838-.197-1.538-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.381-1.81.588-1.81h3.462a1 1 0 00.95-.69l1.07-3.292z"></path>
+                            </svg>
+                          )}
+                        </button>
+                      </td>
+                      <td className="py-3 px-4 text-gray-900 font-medium">{item.name}</td>
+                      <td className="py-3 px-4 text-gray-700">{item.quantity}</td>
+                      <td className="py-3 px-4">
+                        <div className="flex gap-2">
+                          <button
+                            className="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-3 rounded-lg text-sm shadow-md transition duration-200 ease-in-out"
+                            onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, 1); }}
+                          >
+                            +
+                          </button>
+                          <button
+                            className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-3 rounded-lg text-sm shadow-md transition duration-200 ease-in-out"
+                            onClick={(e) => { e.stopPropagation(); handleUpdateQuantity(item.id, -1); }}
+                          >
+                            -
+                          </button>
+                          <button
+                            className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-3 rounded-lg text-sm shadow-md transition duration-200 ease-in-out"
+                            onClick={(e) => { e.stopPropagation(); openEditModal(item); }}
+                          >
+                            Edit
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {inventory.length === 0 && (
           <p className="text-center mt-12 text-lg text-gray-500">No items in inventory. Click the '+' tile to add some!</p>
         )}
       </div>
 
-      {/* Moved global action buttons to be consistent with the new tile layout */}
-      <div className="fixed bottom-6 left-6 right-6 flex flex-col sm:flex-row gap-3">
-        <button
-          className="flex-1 bg-blue-500 hover:bg-blue-600 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition duration-200 ease-in-out z-10"
-          onClick={() => setIsImportModalVisible(true)}
-        >
-          Load JSON
-        </button>
-        <button
-          className="flex-1 bg-purple-500 hover:bg-purple-600 text-white text-lg font-bold py-4 rounded-xl shadow-lg transition duration-200 ease-in-out z-10"
-          onClick={handleExportJson}
-        >
-          Share JSON
-        </button>
-      </div>
-
-
       {/* Add New Item Modal */}
       {isAddModalVisible && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-20 p-4">
           <div className="bg-white rounded-2xl p-8 shadow-xl w-full max-w-md">
-            <h2 className="text-2xl font-bold mb-6 text-gray-900 text-center">Add New Inventory Item</h2>
-            <input
-              className="w-full p-3 border border-gray-300 rounded-lg mb-4 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Item Name"
-              value={newItemName}
-              onChange={(e) => setNewItemName(e.target.value)}
-            />
+            <h2 className="2xl font-bold mb-6 text-gray-900 text-center">Add New Inventory Item</h2>
+            <div className="relative mb-4"> {/* Added relative for positioning suggestions */}
+              <input
+                ref={nameInputRef}
+                className="w-full p-3 border border-gray-300 rounded-lg text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Item Name"
+                value={newItemName}
+                onChange={handleNewItemNameChange}
+                onFocus={() => setShowNameSuggestions(true)}
+                onBlur={handleInputBlur}
+              />
+              {showNameSuggestions && nameSuggestions.length > 0 && (
+                <ul className="absolute z-30 w-full bg-white border border-gray-300 rounded-lg shadow-lg mt-1 max-h-48 overflow-y-auto">
+                  {nameSuggestions.map((suggestion, index) => (
+                    <li
+                      key={index}
+                      className="p-3 cursor-pointer hover:bg-gray-100 text-gray-800"
+                      onMouseDown={(e) => { // Use onMouseDown to prevent blur from hiding before click
+                        e.preventDefault(); // Prevent input blur
+                        handleSelectSuggestion(suggestion);
+                      }}
+                    >
+                      {suggestion}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <input
               className="w-full p-3 border border-gray-300 rounded-lg mb-4 text-base text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="Quantity"
@@ -395,6 +747,22 @@ const App = () => {
               value={newItemQuantity}
               onChange={(e) => setNewItemQuantity(e.target.value)}
             />
+            <div className="mb-6">
+              <label htmlFor="itemColor" className="text-gray-700 text-base mb-2 block">Choose Tile Color:</label>
+              <div className="grid grid-cols-6 gap-2"> {/* Grid for color palette, now 6 columns */}
+                {COLORS.map((colorOption) => (
+                  <button
+                    key={colorOption}
+                    className={`w-8 h-8 rounded-lg cursor-pointer border-2 ${ // Smaller size
+                      newItemColor === colorOption ? 'border-blue-500 ring-2 ring-blue-300' : 'border-gray-300'
+                    } transition duration-150 ease-in-out`}
+                    style={{ backgroundColor: colorOption }}
+                    onClick={() => setNewItemColor(colorOption)}
+                    aria-label={`Select color ${colorOption}`}
+                  ></button>
+                ))}
+              </div>
+            </div>
             <div className="flex justify-around gap-4">
               <button
                 className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
@@ -448,6 +816,35 @@ const App = () => {
             >
               Delete Item
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Import JSON Modal */}
+      {isImportModalVisible && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-20 p-4">
+          <div className="bg-white rounded-2xl p-8 shadow-xl w-full max-w-md">
+            <h2 className="text-2xl font-bold mb-6 text-gray-900 text-center">Import Inventory from JSON</h2>
+            <textarea
+              className="w-full p-3 border border-gray-300 rounded-lg mb-6 text-base text-gray-900 h-40 resize-y focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Paste JSON array here, e.g., [{&quot;name&quot;:&quot;Item A&quot;,&quot;quantity&quot;:10, &quot;isFavorite&quot;:true, &quot;color&quot;:&quot;#abcdef&quot;}]"
+              value={jsonImportText}
+              onChange={(e) => setJsonImportText(e.target.value)}
+            ></textarea>
+            <div className="flex justify-around gap-4">
+              <button
+                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                onClick={() => setIsImportModalVisible(false)}
+              >
+                Cancel
+              </button>
+              <button
+                className="flex-1 bg-blue-500 hover:bg-blue-600 text-white font-bold py-3 rounded-xl shadow-md transition duration-200 ease-in-out"
+                onClick={handleImportJson}
+              >
+                Import Data
+              </button>
+            </div>
           </div>
         </div>
       )}
